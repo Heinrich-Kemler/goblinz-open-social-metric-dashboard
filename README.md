@@ -2,6 +2,10 @@
 
 Open-source, offline-first dashboard that turns X + LinkedIn CSV exports into a clean month-over-month view of your social growth.
 
+## Preview
+
+![Dashboard preview](public/preview.svg)
+
 ## What you get
 
 - Cross-platform KPIs (views, likes, comments, reposts, posts)
@@ -73,6 +77,8 @@ The theme toggle is in the hero section. To customize the accent palette, edit t
 ## Disclaimer
 
 This is an open-source community tool. CSV exports can change and some edge cases may still be buggy. Use the CSV Validation panel to spot missing columns quickly.
+
+## Share this
 
 If this helps you, please share it with your team or friends.
 
