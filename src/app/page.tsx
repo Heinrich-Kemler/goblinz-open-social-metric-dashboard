@@ -16,6 +16,9 @@ export default async function HomePage() {
         latestMonthKey
       )} days (LinkedIn)`
     : "Coverage: n/a";
+  const dataFreshness = data.combined.coverage.end
+    ? formatDateShort(data.combined.coverage.end)
+    : "n/a";
 
   // Latest month KPIs show true month-over-month comparison.
   const latestMonthCards = [
@@ -166,6 +169,9 @@ export default async function HomePage() {
             <div className="mt-6 flex flex-wrap gap-4 text-sm text-slate">
               <div className="glass rounded-full px-4 py-2">
                 Latest MoM: {data.lastMonthLabel} vs {data.previousMonthLabel}
+              </div>
+              <div className="glass rounded-full px-4 py-2">
+                Data freshness: {dataFreshness}
               </div>
               <div className="glass rounded-full px-4 py-2">
                 Data source: local CSV files

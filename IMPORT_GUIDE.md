@@ -16,10 +16,20 @@ Data/
 
 Only the first two files are required.
 
+You can keep **multiple monthly exports** in the same folder. The dashboard will merge overlapping days and keep the most complete values per day (no double-counting).
+
+Suggested naming pattern:
+
+- `x_account_analytics_2026-02.csv`
+- `x_post_analytics_2026-02.csv`
+- `x_video_overview_2026-02.csv`
+- `linkedin_metrics_2026-02.csv`
+- `linkedin_posts_2026-02.csv`
+
 ## X (Twitter) exports
 
 ### 1) Account analytics (required)
-- File name: `x_account_analytics.csv`
+- File name: `x_account_analytics.csv` (or `x_account_analytics_YYYY-MM.csv`)
 - Required columns:
   - `Date`
   - `Impressions`
@@ -29,27 +39,27 @@ Only the first two files are required.
   - `Create Post`, `New follows`, `Unfollows`
 
 ### 2) Post analytics (optional)
-- File name: `x_post_analytics.csv`
+- File name: `x_post_analytics.csv` (or `x_post_analytics_YYYY-MM.csv`)
 - The dashboard also auto-detects files named `account_analytics_content_*.csv`.
 - Required columns:
   - `Impressions`
   - Either a post text column (`Tweet text`) or a link column (`Tweet permalink`)
 
 ### 3) Video overview (optional)
-- File name: `x_video_overview.csv`
+- File name: `x_video_overview.csv` (or `x_video_overview_YYYY-MM.csv`)
 - Required columns:
   - `Date`, `Views`, `Watch Time (ms)`
 
 ## LinkedIn exports
 
 ### 1) Metrics (required)
-- File name: `linkedin_metrics.csv`
+- File name: `linkedin_metrics.csv` (or `linkedin_metrics_YYYY-MM.csv`)
 - Required columns:
   - `Date`
   - `Impressions (total)` or `Impressions`
 
 ### 2) Posts (optional)
-- File name: `linkedin_posts.csv`
+- File name: `linkedin_posts.csv` (or `linkedin_posts_YYYY-MM.csv`)
 - Required columns:
   - `Created date`
   - `Impressions`

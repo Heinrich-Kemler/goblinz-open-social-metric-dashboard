@@ -137,6 +137,27 @@ export type BestTimeSlot = {
   engagementRate: number | null;
 };
 
+type MetricKey = Exclude<keyof DailyMetric, "source" | "date">;
+
+const METRIC_KEYS: MetricKey[] = [
+  "views",
+  "likes",
+  "comments",
+  "reposts",
+  "clicks",
+  "shares",
+  "bookmarks",
+  "profileVisits",
+  "engagements",
+  "videoViews",
+  "videoWatchViews",
+  "videoWatchTimeMs",
+  "videoCompletionRateSum",
+  "posts",
+  "newFollows",
+  "unfollows"
+];
+
 export type CsvValidation = {
   id: string;
   label: string;
@@ -244,16 +265,103 @@ export async function getDashboardData(): Promise<DashboardData> {
 
 type ColumnGroup = { label: string; fields: string[] };
 
+async function listCsvFiles(
+  dir: string,
+  include: (fileName: string) => boolean
+): Promise<string[]> {
+  try {
+    const entries = await fs.readdir(dir);
+    return entries
+      .filter((name) => name.toLowerCase().endsWith(".csv") && include(name))
+      .map((name) => path.join(dir, name))
+      .sort();
+  } catch (error) {
+    return [];
+  }
+}
+
+function matchesAny(fileName: string, tokens: string[]): boolean {
+  const lower = fileName.toLowerCase();
+  return tokens.some((token) => lower.includes(token));
+}
+
+async function resolveXDailyFiles(): Promise<string[]> {
+  if (process.env.X_CSV_PATH) {
+    return [process.env.X_CSV_PATH];
+  }
+  const matches = await listCsvFiles(DATA_DIR_RAW, (name) =>
+    matchesAny(name, ["x_account_analytics", "x account analytics"])
+  );
+  return matches.length > 0 ? matches : [X_CSV];
+}
+
+async function resolveXVideoOverviewFiles(): Promise<string[]> {
+  if (process.env.X_VIDEO_OVERVIEW_CSV_PATH) {
+    return [process.env.X_VIDEO_OVERVIEW_CSV_PATH];
+  }
+  const matches = await listCsvFiles(DATA_DIR_RAW, (name) =>
+    matchesAny(name, ["x_video_overview", "video_overview", "video overview"])
+  );
+  return matches.length > 0 ? matches : [X_VIDEO_OVERVIEW_CSV];
+}
+
+async function resolveXPostFiles(): Promise<string[]> {
+  if (process.env.X_POSTS_CSV_PATH) {
+    return [process.env.X_POSTS_CSV_PATH];
+  }
+  const matches = await listCsvFiles(DATA_DIR_RAW, (name) =>
+    matchesAny(name, [
+      "x_post_analytics",
+      "x post analytics",
+      "account_analytics_content_"
+    ])
+  );
+  return matches.length > 0 ? matches : [X_POSTS_CSV];
+}
+
+async function resolveLinkedInMetricFiles(): Promise<string[]> {
+  if (process.env.LINKEDIN_CSV_PATH) {
+    return [process.env.LINKEDIN_CSV_PATH];
+  }
+  const matches = await listCsvFiles(DATA_DIR_RAW, (name) =>
+    matchesAny(name, ["linkedin_metrics", "linkedin metrics"])
+  );
+  return matches.length > 0 ? matches : [LINKEDIN_CSV];
+}
+
+async function resolveLinkedInPostsFiles(): Promise<string[]> {
+  if (process.env.LINKEDIN_POSTS_CSV_PATH) {
+    return [process.env.LINKEDIN_POSTS_CSV_PATH];
+  }
+  const matches = await listCsvFiles(DATA_DIR_RAW, (name) =>
+    matchesAny(name, ["linkedin_posts", "linkedin posts", "all posts"])
+  );
+  return matches.length > 0 ? matches : [LINKEDIN_POSTS_CSV];
+}
+
+type CsvGroupSource = {
+  texts: string[];
+  filePaths: string[];
+  source: "raw" | "sample" | "missing";
+};
+
 // Prefer raw user exports, but fall back to sample files so the UI never crashes.
-async function readCsvWithFallback(
-  rawFile: string,
+async function readCsvGroupWithFallback(
+  rawFiles: string[],
   sampleFile: string
-): Promise<{ text: string | null; filePath: string; source: "raw" | "sample" | "missing" }> {
-  const rawPath = resolveDataPath(rawFile, DATA_DIR_RAW);
-  if (existsSync(rawPath)) {
+): Promise<CsvGroupSource> {
+  const rawPaths = Array.from(
+    new Set(rawFiles.map((file) => resolveDataPath(file, DATA_DIR_RAW)))
+  );
+  const existingRawPaths = rawPaths.filter((filePath) => existsSync(filePath));
+
+  if (existingRawPaths.length > 0) {
+    const texts = await Promise.all(
+      existingRawPaths.map((filePath) => fs.readFile(filePath, "utf-8"))
+    );
     return {
-      text: await fs.readFile(rawPath, "utf-8"),
-      filePath: rawPath,
+      texts,
+      filePaths: existingRawPaths,
       source: "raw"
     };
   }
@@ -261,24 +369,36 @@ async function readCsvWithFallback(
   const samplePath = resolveDataPath(sampleFile, DATA_DIR_SAMPLE);
   if (existsSync(samplePath)) {
     return {
-      text: await fs.readFile(samplePath, "utf-8"),
-      filePath: samplePath,
+      texts: [await fs.readFile(samplePath, "utf-8")],
+      filePaths: [samplePath],
       source: "sample"
     };
   }
 
   return {
-    text: null,
-    filePath: rawPath,
+    texts: [],
+    filePaths: rawPaths,
     source: "missing"
   };
+}
+
+function formatFilePathLabel(filePaths: string[]): string {
+  if (!filePaths || filePaths.length === 0) return "n/a";
+  if (filePaths.length === 1) {
+    return path.relative(process.cwd(), filePaths[0]);
+  }
+  const uniqueDirs = Array.from(
+    new Set(filePaths.map((filePath) => path.relative(process.cwd(), path.dirname(filePath))))
+  );
+  const dirLabel = uniqueDirs.length === 1 ? uniqueDirs[0] : "Data/raw";
+  return `${dirLabel} (${filePaths.length} files)`;
 }
 
 // Summarize which required and optional columns are missing for the UI.
 function buildCsvValidation(args: {
   id: string;
   label: string;
-  filePath: string;
+  filePaths: string[];
   source: "raw" | "sample" | "missing";
   rowCount: number;
   headers: string[];
@@ -292,7 +412,7 @@ function buildCsvValidation(args: {
   return {
     id: args.id,
     label: args.label,
-    filePath: args.filePath ? path.relative(process.cwd(), args.filePath) : "n/a",
+    filePath: formatFilePathLabel(args.filePaths),
     source: args.source,
     rowCount: args.rowCount,
     missingRequired,
@@ -317,16 +437,21 @@ async function loadXDailyMetrics(): Promise<{
   videoValidation: CsvValidation;
 }> {
   const { videoMap, validation: videoValidation } = await loadXVideoOverviewByDate();
-  const source = await readCsvWithFallback(X_CSV, X_CSV_SAMPLE);
-  const parsed = source.text ? parseCsvWithHeader(source.text, "Date") : null;
-  const headers = parsed?.headers ?? [];
-  const rows = parsed?.rows ?? [];
+  const files = await resolveXDailyFiles();
+  const sourceGroup = await readCsvGroupWithFallback(files, X_CSV_SAMPLE);
+  const parsedGroups = sourceGroup.texts.map((text) =>
+    parseCsvWithHeader(text, "Date")
+  );
+  const headers = Array.from(
+    new Set(parsedGroups.flatMap((group) => group.headers))
+  );
+  const rows = parsedGroups.flatMap((group) => group.rows);
 
   const validation = buildCsvValidation({
     id: "x-daily",
     label: "X account analytics",
-    filePath: source.filePath,
-    source: source.source,
+    filePaths: sourceGroup.filePaths,
+    source: sourceGroup.source,
     rowCount: rows.length,
     headers,
     requiredGroups: [
@@ -386,22 +511,27 @@ async function loadXDailyMetrics(): Promise<{
     })
     .filter(Boolean) as DailyMetric[];
 
-  return { metrics, validation, videoValidation };
+  return { metrics: mergeDailyMetrics(metrics), validation, videoValidation };
 }
 
 async function loadLinkedInDailyMetrics(
   postsByDate: Map<string, number>
 ): Promise<{ metrics: DailyMetric[]; validation: CsvValidation }> {
-  const source = await readCsvWithFallback(LINKEDIN_CSV, LINKEDIN_CSV_SAMPLE);
-  const parsed = source.text ? parseLinkedInCsvRows(source.text, "Date") : null;
-  const headers = parsed?.headers ?? [];
-  const rows = parsed?.rows ?? [];
+  const files = await resolveLinkedInMetricFiles();
+  const sourceGroup = await readCsvGroupWithFallback(files, LINKEDIN_CSV_SAMPLE);
+  const parsedGroups = sourceGroup.texts.map((text) =>
+    parseLinkedInCsvRows(text, "Date")
+  );
+  const headers = Array.from(
+    new Set(parsedGroups.flatMap((group) => group.headers))
+  );
+  const rows = parsedGroups.flatMap((group) => group.rows);
 
   const validation = buildCsvValidation({
     id: "linkedin-daily",
     label: "LinkedIn daily metrics",
-    filePath: source.filePath,
-    source: source.source,
+    filePaths: sourceGroup.filePaths,
+    source: sourceGroup.source,
     rowCount: rows.length,
     headers,
     requiredGroups: [
@@ -488,12 +618,38 @@ async function loadLinkedInDailyMetrics(
     })
     .filter(Boolean) as DailyMetric[];
 
-  return { metrics, validation };
+  return { metrics: mergeDailyMetrics(metrics), validation };
 }
 
 // ----------------------------
 // Aggregation helpers
 // ----------------------------
+
+function mergeDailyMetrics(metrics: DailyMetric[]): DailyMetric[] {
+  const byDay = new Map<string, DailyMetric>();
+
+  metrics.forEach((metric) => {
+    const key = `${metric.source}-${toDayKey(metric.date)}`;
+    const existing = byDay.get(key);
+
+    if (!existing) {
+      byDay.set(key, metric);
+      return;
+    }
+
+    // Same day can appear in multiple monthly exports. Keep the most complete
+    // values without double-counting by taking the max per metric.
+    const merged: DailyMetric = { ...existing };
+    METRIC_KEYS.forEach((field) => {
+      merged[field] = Math.max(existing[field], metric[field]);
+    });
+    byDay.set(key, merged);
+  });
+
+  return Array.from(byDay.values()).sort(
+    (a, b) => a.date.getTime() - b.date.getTime()
+  );
+}
 
 function buildPlatformData(daily: DailyMetric[]): PlatformData {
   const monthly = aggregateByMonth(daily);
@@ -694,19 +850,24 @@ async function loadXVideoOverviewByDate(): Promise<{
     string,
     { views: number; watchTimeMs: number; completionRate: number }
   >();
-  const source = await readCsvWithFallback(
-    X_VIDEO_OVERVIEW_CSV,
+  const files = await resolveXVideoOverviewFiles();
+  const sourceGroup = await readCsvGroupWithFallback(
+    files,
     X_VIDEO_OVERVIEW_CSV_SAMPLE
   );
-  const parsed = source.text ? parseCsvWithHeader(source.text, "Date") : null;
-  const headers = parsed?.headers ?? [];
-  const rows = parsed?.rows ?? [];
+  const parsedGroups = sourceGroup.texts.map((text) =>
+    parseCsvWithHeader(text, "Date")
+  );
+  const headers = Array.from(
+    new Set(parsedGroups.flatMap((group) => group.headers))
+  );
+  const rows = parsedGroups.flatMap((group) => group.rows);
 
   const validation = buildCsvValidation({
     id: "x-video-overview",
     label: "X video overview",
-    filePath: source.filePath,
-    source: source.source,
+    filePaths: sourceGroup.filePaths,
+    source: sourceGroup.source,
     rowCount: rows.length,
     headers,
     requiredGroups: [
@@ -724,8 +885,16 @@ async function loadXVideoOverviewByDate(): Promise<{
     const views = toNumber(pickField(row, ["Views"]));
     const watchTimeMs = toNumber(pickField(row, ["Watch Time (ms)"]));
     const completionRate = toNumber(pickField(row, ["Completion Rate"])) / 100;
+    const key = toDayKey(date);
+    const existing = videoMap.get(key);
 
-    videoMap.set(toDayKey(date), { views, watchTimeMs, completionRate });
+    if (
+      !existing ||
+      views > existing.views ||
+      (views === existing.views && watchTimeMs > existing.watchTimeMs)
+    ) {
+      videoMap.set(key, { views, watchTimeMs, completionRate });
+    }
   });
 
   return { videoMap, validation };
@@ -735,17 +904,21 @@ async function loadXPostsData(): Promise<{
   topPosts: XPostSummary[];
   validation: CsvValidation;
 }> {
-  const rawPath = await resolveXPostsFilePath();
-  const source = await readCsvWithFallback(rawPath ?? X_POSTS_CSV, X_POSTS_CSV_SAMPLE);
-  const parsed = source.text ? parseCsvWithHeader(source.text, "Impressions") : null;
-  const headers = parsed?.headers ?? [];
-  const rows = parsed?.rows ?? [];
+  const files = await resolveXPostFiles();
+  const sourceGroup = await readCsvGroupWithFallback(files, X_POSTS_CSV_SAMPLE);
+  const parsedGroups = sourceGroup.texts.map((text) =>
+    parseCsvWithHeader(text, "Impressions")
+  );
+  const headers = Array.from(
+    new Set(parsedGroups.flatMap((group) => group.headers))
+  );
+  const rows = parsedGroups.flatMap((group) => group.rows);
 
   const validation = buildCsvValidation({
     id: "x-posts",
     label: "X post analytics",
-    filePath: source.filePath,
-    source: source.source,
+    filePaths: sourceGroup.filePaths,
+    source: sourceGroup.source,
     rowCount: rows.length,
     headers,
     requiredGroups: [
@@ -809,7 +982,16 @@ async function loadXPostsData(): Promise<{
     })
     .filter(Boolean) as XPostSummary[];
 
-  const topPosts = posts
+  const deduped = new Map<string, XPostSummary>();
+  posts.forEach((post) => {
+    const key = post.link || `${post.text}-${post.createdAt?.toISOString() ?? ""}`;
+    const existing = deduped.get(key);
+    if (!existing || post.impressions > existing.impressions) {
+      deduped.set(key, post);
+    }
+  });
+
+  const topPosts = Array.from(deduped.values())
     .sort((a, b) => b.impressions - a.impressions)
     .slice(0, 5);
 
@@ -909,24 +1091,27 @@ async function loadLinkedInPostsData(): Promise<{
   validation: CsvValidation;
 }> {
   const postsByDate = new Map<string, number>();
-  const topPosts: LinkedInPostSummary[] = [];
-  const topPostsByRate: LinkedInPostSummary[] = [];
   const contentTypeMap = new Map<string, LinkedInContentTypeSummary>();
   const timeSlotMap = new Map<string, BestTimeSlot>();
   let timeOfDayAvailable = false;
-  const source = await readCsvWithFallback(
-    LINKEDIN_POSTS_CSV,
+  const files = await resolveLinkedInPostsFiles();
+  const sourceGroup = await readCsvGroupWithFallback(
+    files,
     LINKEDIN_POSTS_CSV_SAMPLE
   );
-  const parsed = source.text ? parseLinkedInCsvRows(source.text, "Created date") : null;
-  const headers = parsed?.headers ?? [];
-  const rows = parsed?.rows ?? [];
+  const parsedGroups = sourceGroup.texts.map((text) =>
+    parseLinkedInCsvRows(text, "Created date")
+  );
+  const headers = Array.from(
+    new Set(parsedGroups.flatMap((group) => group.headers))
+  );
+  const rows = parsedGroups.flatMap((group) => group.rows);
 
   const validation = buildCsvValidation({
     id: "linkedin-posts",
     label: "LinkedIn post analytics",
-    filePath: source.filePath,
-    source: source.source,
+    filePaths: sourceGroup.filePaths,
+    source: sourceGroup.source,
     rowCount: rows.length,
     headers,
     requiredGroups: [
@@ -945,17 +1130,18 @@ async function loadLinkedInPostsData(): Promise<{
     ]
   });
 
+  type LinkedInPostRecord = LinkedInPostSummary & { hasTime: boolean };
+  const rawPosts: LinkedInPostRecord[] = [];
+
   rows.forEach((row) => {
     const dateValue = pickField(row, ["Created date", "Created Date"]);
     const rawDate = String(dateValue ?? "").trim();
-    if (rawDate.includes(":")) {
+    const hasTime = rawDate.includes(":");
+    if (hasTime) {
       timeOfDayAvailable = true;
     }
     const createdAt = parseLinkedInDateTime(dateValue);
     if (!createdAt) return;
-
-    const key = toDayKey(createdAt);
-    postsByDate.set(key, (postsByDate.get(key) ?? 0) + 1);
 
     const impressions = toNumber(pickField(row, ["Impressions"]));
     const views = toNumber(pickField(row, ["Views"]));
@@ -972,7 +1158,7 @@ async function loadLinkedInPostsData(): Promise<{
       parseRate(engagementRateRaw) ??
       calculateEngagementRate(impressions, likes, comments, reposts);
 
-    const postSummary: LinkedInPostSummary = {
+    const postSummary: LinkedInPostRecord = {
       title: sanitizeTitle(String(pickField(row, ["Post title"])).trim()),
       link: String(pickField(row, ["Post link"])).trim(),
       createdAt,
@@ -983,15 +1169,33 @@ async function loadLinkedInPostsData(): Promise<{
       comments,
       reposts,
       engagementRate,
-      contentType: String(pickField(row, ["Content Type", "Post type"])).trim()
+      contentType: String(pickField(row, ["Content Type", "Post type"])).trim(),
+      hasTime
     };
 
-    topPosts.push(postSummary);
-    topPostsByRate.push(postSummary);
+    rawPosts.push(postSummary);
+  });
 
-    const contentType =
-      String(pickField(row, ["Content Type", "Post type"])).trim() ||
-      "Unknown";
+  const dedupedPosts = new Map<string, LinkedInPostRecord>();
+  rawPosts.forEach((post) => {
+    const key = post.link || `${post.title}-${post.createdAt.toISOString()}`;
+    const existing = dedupedPosts.get(key);
+    if (
+      !existing ||
+      post.impressions > existing.impressions ||
+      (post.impressions === existing.impressions && post.hasTime && !existing.hasTime)
+    ) {
+      dedupedPosts.set(key, post);
+    }
+  });
+
+  const uniquePosts = Array.from(dedupedPosts.values());
+
+  uniquePosts.forEach((post) => {
+    const key = toDayKey(post.createdAt);
+    postsByDate.set(key, (postsByDate.get(key) ?? 0) + 1);
+
+    const contentType = post.contentType || "Unknown";
     const current = contentTypeMap.get(contentType) ?? {
       type: contentType,
       posts: 0,
@@ -1000,15 +1204,15 @@ async function loadLinkedInPostsData(): Promise<{
       engagements: 0
     };
     current.posts += 1;
-    current.impressions += impressions;
-    current.views += views;
-    current.engagements += likes + comments + reposts;
+    current.impressions += post.impressions;
+    current.views += post.views;
+    current.engagements += post.likes + post.comments + post.reposts;
     contentTypeMap.set(contentType, current);
 
     const dayName = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][
-      createdAt.getUTCDay()
+      post.createdAt.getUTCDay()
     ];
-    const hour = rawDate.includes(":") ? createdAt.getUTCHours() : null;
+    const hour = post.hasTime ? post.createdAt.getUTCHours() : null;
     const slotKey = hour === null ? dayName : `${dayName}-${hour}`;
     const slot =
       timeSlotMap.get(slotKey) ?? {
@@ -1021,16 +1225,18 @@ async function loadLinkedInPostsData(): Promise<{
         engagementRate: null
       };
     slot.posts += 1;
-    slot.impressions += impressions;
-    slot.engagements += likes + comments + reposts;
+    slot.impressions += post.impressions;
+    slot.engagements += post.likes + post.comments + post.reposts;
     slot.engagementRate = slot.impressions
       ? slot.engagements / slot.impressions
       : null;
     timeSlotMap.set(slotKey, slot);
   });
 
+  const uniqueSummaries = uniquePosts.map(({ hasTime, ...summary }) => summary);
+
   // Rank by impressions first, then by views as a tiebreaker.
-  const sortedTopPosts = topPosts
+  const sortedTopPosts = uniqueSummaries
     .filter((post) => post.title || post.link)
     .sort((a, b) => {
       if (b.impressions !== a.impressions) {
@@ -1044,7 +1250,7 @@ async function loadLinkedInPostsData(): Promise<{
     .sort((a, b) => b.impressions - a.impressions)
     .slice(0, 6);
 
-  const sortedTopPostsByRate = topPostsByRate
+  const sortedTopPostsByRate = uniqueSummaries
     .filter((post) => post.engagementRate !== null)
     .sort((a, b) => (b.engagementRate ?? 0) - (a.engagementRate ?? 0))
     .slice(0, 5);
@@ -1119,35 +1325,6 @@ function decodeHtmlEntities(value: string): string {
     .replace(/&amp;/g, "&")
     .replace(/&quot;/g, "\"")
     .replace(/&#39;/g, "'");
-}
-
-async function resolveXPostsFilePath(): Promise<string | null> {
-  const explicit = process.env.X_POSTS_CSV_PATH;
-  if (explicit) {
-    const candidate = resolveDataPath(explicit, DATA_DIR_RAW);
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-  }
-
-  try {
-    const files = await fs.readdir(DATA_DIR_RAW);
-    const match = files
-      .filter(
-        (name) =>
-          name.startsWith("account_analytics_content_") && name.endsWith(".csv")
-      )
-      .sort()
-      .at(-1);
-    if (match) {
-      return path.join(DATA_DIR_RAW, match);
-    }
-  } catch (error) {
-    // Fall through to default.
-  }
-
-  const fallback = resolveDataPath(X_POSTS_CSV, DATA_DIR_RAW);
-  return existsSync(fallback) ? fallback : null;
 }
 
 function resolveDataPath(fileName: string, baseDir: string): string {

@@ -31,7 +31,7 @@ Sample data lives in `Data/sample/` and is used automatically when `Data/raw/` i
 ## Getting results (walkthrough)
 
 1. Download your CSV exports from X and LinkedIn.
-2. Place them in `Data/raw/` using the filenames below.
+2. Place them in `Data/raw/` using the filenames below (keep older monthly files).
 3. Restart the dev server (`npm run dev`).
 4. Open the dashboard and check the **Data Quality** section for missing columns.
 5. Add the optional files for top posts and video watch time.
@@ -46,6 +46,22 @@ Sample data lives in `Data/sample/` and is used automatically when `Data/raw/` i
 - `Data/raw/x_post_analytics.csv` (top X posts)
 - `Data/raw/x_video_overview.csv` (video watch time)
 - `Data/raw/linkedin_posts.csv` (LinkedIn post counts + top posts)
+
+## Monthly updates (CSV-only workflow)
+
+Keep every monthly export in `Data/raw/` instead of replacing the old file. The dashboard will:
+
+- Merge overlapping days across files.
+- Keep the most complete values per day (no double-counting).
+- Preserve the oldest history from your first export while letting new months add on.
+
+Suggested naming pattern (works automatically):
+
+- `x_account_analytics_2026-02.csv`
+- `x_post_analytics_2026-02.csv`
+- `x_video_overview_2026-02.csv`
+- `linkedin_metrics_2026-02.csv`
+- `linkedin_posts_2026-02.csv`
 
 If you prefer different names, use environment variables:
 
